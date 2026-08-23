@@ -28,6 +28,8 @@ class ArenaActivity : Activity() {
     private var running = false
     private var finished = false
     private var waiting = false
+    private var failA = 0
+    private var failB = 0
     private var pendingA: Decision? = null
     private var pendingB: Decision? = null
 
@@ -185,7 +187,10 @@ class ArenaActivity : Activity() {
         if (finished) return
         running = on
         playButton.text = if (on) "Pause" else "Play"
-        if (on) tick()
+        if (on) {
+            banner.visibility = View.GONE
+            tick()
+        }
     }
 
     private fun tick() {
@@ -262,6 +267,24 @@ class ArenaActivity : Activity() {
             return
         }
 
+        failA = if (a.error != null) failA + 1 else 0
+        failB = if (b.error != null) failB + 1 else 0
+        if (failA >= 3 || failB >= 3) {
+            val alpha = failA >= 3
+            val who = if (alpha) "Alpha" else "Beta"
+            val why = (if (alpha) a.error else b.error) ?: "The model kept returning nothing usable."
+            failA = 0
+            failB = 0
+            line("── paused ─────────────", Th.DANGER, true)
+            halt(
+                who + " isn't sending usable moves",
+                why + "\n\nThat's three turns in a row, so the match stopped rather than keep spending " +
+                    "calls. Check the model id in the harness editor — its Preview shows exactly what " +
+                    "gets sent — or try a different model. Press Play to carry on anyway."
+            )
+            return
+        }
+
         status.text = ""
         if (running) handler.postDelayed({ tick() }, pace.toLong())
     }
@@ -308,6 +331,27 @@ class ArenaActivity : Activity() {
         rest.layoutParams = pr
     }
 
+    private fun halt(title: String, detail: String) {
+        running = false
+        waiting = false
+        status.text = ""
+        playButton.text = "Play"
+
+        banner.removeAllViews()
+        banner.background = rounded(Th.PANEL, 14f, this, Th.DANGER)
+        banner.visibility = View.VISIBLE
+        banner.addView(eyebrow(this, "paused", Th.DANGER))
+        banner.gap(dp(this, 6))
+        banner.addView(heading(this, title, 18f))
+        banner.gap(dp(this, 4))
+        banner.addView(body(this, detail, Th.MUTED, 13f))
+        banner.gap(dp(this, 12))
+        val r = row(this)
+        r.addView(smallButton(this, "Copy match log") { copyToClipboard(this, "match", fullLog.toString()) })
+        r.addView(smallButton(this, "Exit") { finish() }, leftMargin(8))
+        banner.addView(r)
+    }
+
     private fun end(title: String, detail: String) {
         finished = true
         running = false
@@ -317,6 +361,7 @@ class ArenaActivity : Activity() {
         line("── " + title.uppercase() + " ─────────────", Th.OK, true)
 
         banner.removeAllViews()
+        banner.background = rounded(Th.PANEL, 14f, this, Th.OK)
         banner.visibility = View.VISIBLE
         banner.addView(eyebrow(this, "result", Th.OK))
         banner.gap(dp(this, 6))

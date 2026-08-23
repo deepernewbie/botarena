@@ -20,7 +20,7 @@ object OpenRouter {
         val body = JSONObject()
         body.put("model", model)
         body.put("temperature", temperature)
-        body.put("max_tokens", 700)
+        body.put("max_tokens", 1500)
         val msgs = JSONArray()
         msgs.put(JSONObject().put("role", "system").put("content", system))
         msgs.put(JSONObject().put("role", "user").put("content", user))
@@ -54,10 +54,20 @@ object OpenRouter {
             val choices = o.optJSONArray("choices")
                 ?: throw ApiException("Reply had no choices: " + shorten(text))
             if (choices.length() == 0) throw ApiException("The model returned no choices.")
-            val msg = choices.getJSONObject(0).optJSONObject("message")
+            val choice = choices.getJSONObject(0)
+            val msg = choice.optJSONObject("message")
                 ?: throw ApiException("Reply had no message: " + shorten(text))
-            val content = msg.optString("content", "")
-            if (content.isBlank()) throw ApiException("The model returned an empty reply.")
+            val content = extractText(msg)
+            if (content.isBlank()) {
+                val finish = choice.optString("finish_reason", "")
+                val why = when (finish) {
+                    "length" -> "The model ran out of tokens before writing an answer. Reasoning models " +
+                        "often spend the whole budget thinking — try a non-reasoning model for this."
+                    "content_filter" -> "The provider's content filter blocked the reply."
+                    else -> "The model sent a message with no text in it."
+                }
+                throw ApiException(why + " (finish_reason: " + (if (finish.isBlank()) "none" else finish) + ")")
+            }
             return content
         } finally {
             conn.disconnect()
@@ -89,6 +99,37 @@ object OpenRouter {
         } finally {
             conn.disconnect()
         }
+    }
+
+    /**
+     * Providers disagree about where the text lives. It can be a plain string, an
+     * array of typed parts, or absent with the words sitting in `reasoning`.
+     * Note that optString on a JSON null returns the string "null", which is why
+     * this checks isNull first rather than trusting the default.
+     */
+    private fun extractText(msg: JSONObject): String {
+        if (!msg.isNull("content")) {
+            val c = msg.opt("content")
+            if (c is String && c.isNotBlank()) return c
+            if (c is JSONArray) {
+                val sb = StringBuilder()
+                for (i in 0 until c.length()) {
+                    val part = c.optJSONObject(i) ?: continue
+                    val t = part.optString("text", "")
+                    if (t.isNotBlank()) sb.append(t).append("\n")
+                }
+                if (sb.isNotBlank()) return sb.toString()
+            }
+        }
+        if (!msg.isNull("reasoning")) {
+            val r = msg.optString("reasoning", "")
+            if (r.isNotBlank()) return r
+        }
+        if (!msg.isNull("refusal")) {
+            val r = msg.optString("refusal", "")
+            if (r.isNotBlank()) return "The model refused: " + r
+        }
+        return ""
     }
 
     private fun readAll(conn: HttpURLConnection, isError: Boolean): String {
