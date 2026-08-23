@@ -14,18 +14,46 @@ object OpenRouter {
 
     class ApiException(message: String) : Exception(message)
 
-    fun chat(apiKey: String, model: String, temperature: Double, system: String, user: String): String {
+    fun chat(
+        apiKey: String,
+        model: String,
+        temperature: Double,
+        thinking: String,
+        system: String,
+        user: String
+    ): String {
         if (apiKey.isBlank()) throw ApiException("No OpenRouter key saved. Add one in Settings.")
 
         val body = JSONObject()
         body.put("model", model)
         body.put("temperature", temperature)
-        body.put("max_tokens", 1500)
+        body.put("max_tokens", 2000)
         val msgs = JSONArray()
         msgs.put(JSONObject().put("role", "system").put("content", system))
         msgs.put(JSONObject().put("role", "user").put("content", user))
         body.put("messages", msgs)
 
+        // A robot needs a move, not an essay. Reasoning tokens come out of the same
+        // budget as the answer, so a thinking model can spend the lot and say nothing.
+        when (thinking) {
+            THINK_OFF -> body.put("reasoning", JSONObject().put("enabled", false).put("exclude", true))
+            THINK_BRIEF -> body.put("reasoning", JSONObject().put("effort", "low").put("exclude", true))
+        }
+
+        try {
+            return send(apiKey, body)
+        } catch (e: ApiException) {
+            // Some endpoints make reasoning mandatory and reject the switch outright.
+            val msg = e.message ?: ""
+            if (body.has("reasoning") && msg.contains("reasoning", true)) {
+                body.remove("reasoning")
+                return send(apiKey, body)
+            }
+            throw e
+        }
+    }
+
+    private fun send(apiKey: String, body: JSONObject): String {
         val conn = URL("$BASE/chat/completions").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
@@ -57,21 +85,62 @@ object OpenRouter {
             val choice = choices.getJSONObject(0)
             val msg = choice.optJSONObject("message")
                 ?: throw ApiException("Reply had no message: " + shorten(text))
-            val content = extractText(msg)
-            if (content.isBlank()) {
-                val finish = choice.optString("finish_reason", "")
-                val why = when (finish) {
-                    "length" -> "The model ran out of tokens before writing an answer. Reasoning models " +
-                        "often spend the whole budget thinking — try a non-reasoning model for this."
+
+            val content = contentOf(msg)
+            if (content.isNotBlank()) return content
+
+            // Nothing usable. Work out why, because "empty reply" helps nobody.
+            val finish = choice.optString("finish_reason", "")
+            val thought = reasoningOf(msg)
+            if (thought.isNotBlank()) {
+                throw ApiException(
+                    "The model wrote " + thought.length + " characters of thinking and never got to an " +
+                        "answer. Set Thinking to Off in the harness editor, or pick a model that " +
+                        "doesn't reason. Its last words: \"" + shorten(thought.takeLast(160)) + "\""
+                )
+            }
+            throw ApiException(
+                when (finish) {
+                    "length" -> "The model hit the token ceiling before writing anything."
                     "content_filter" -> "The provider's content filter blocked the reply."
                     else -> "The model sent a message with no text in it."
-                }
-                throw ApiException(why + " (finish_reason: " + (if (finish.isBlank()) "none" else finish) + ")")
-            }
-            return content
+                } + " (finish_reason: " + (if (finish.isBlank()) "none" else finish) + ")"
+            )
         } finally {
             conn.disconnect()
         }
+    }
+
+    /**
+     * Text can be a plain string or an array of typed parts. Note that optString on
+     * a JSON null returns the string "null", so isNull has to be checked first.
+     */
+    private fun contentOf(msg: JSONObject): String {
+        if (msg.isNull("content")) return ""
+        val c = msg.opt("content")
+        if (c is String) return if (c == "null") "" else c
+        if (c is JSONArray) {
+            val sb = StringBuilder()
+            for (i in 0 until c.length()) {
+                val part = c.optJSONObject(i) ?: continue
+                val t = part.optString("text", "")
+                if (t.isNotBlank()) sb.append(t).append("\n")
+            }
+            return sb.toString()
+        }
+        return ""
+    }
+
+    private fun reasoningOf(msg: JSONObject): String {
+        if (!msg.isNull("reasoning")) {
+            val r = msg.optString("reasoning", "")
+            if (r.isNotBlank() && r != "null") return r
+        }
+        if (!msg.isNull("refusal")) {
+            val r = msg.optString("refusal", "")
+            if (r.isNotBlank() && r != "null") return "Refused: " + r
+        }
+        return ""
     }
 
     fun listModels(apiKey: String): List<String> {
@@ -99,37 +168,6 @@ object OpenRouter {
         } finally {
             conn.disconnect()
         }
-    }
-
-    /**
-     * Providers disagree about where the text lives. It can be a plain string, an
-     * array of typed parts, or absent with the words sitting in `reasoning`.
-     * Note that optString on a JSON null returns the string "null", which is why
-     * this checks isNull first rather than trusting the default.
-     */
-    private fun extractText(msg: JSONObject): String {
-        if (!msg.isNull("content")) {
-            val c = msg.opt("content")
-            if (c is String && c.isNotBlank()) return c
-            if (c is JSONArray) {
-                val sb = StringBuilder()
-                for (i in 0 until c.length()) {
-                    val part = c.optJSONObject(i) ?: continue
-                    val t = part.optString("text", "")
-                    if (t.isNotBlank()) sb.append(t).append("\n")
-                }
-                if (sb.isNotBlank()) return sb.toString()
-            }
-        }
-        if (!msg.isNull("reasoning")) {
-            val r = msg.optString("reasoning", "")
-            if (r.isNotBlank()) return r
-        }
-        if (!msg.isNull("refusal")) {
-            val r = msg.optString("refusal", "")
-            if (r.isNotBlank()) return "The model refused: " + r
-        }
-        return ""
     }
 
     private fun readAll(conn: HttpURLConnection, isError: Boolean): String {

@@ -99,6 +99,25 @@ class HarnessEditorActivity : Activity() {
         root.addView(divider(this), LinearLayout.LayoutParams(MATCH, dp(this, 1)))
         root.gap(dp(this, 20))
 
+        root.gap(dp(this, 18))
+        root.addView(sectionLabel(this, "Thinking", thinkingHint()))
+        root.gap(dp(this, 10))
+        root.addView(
+            segmented(
+                this,
+                listOf(THINK_OFF, THINK_BRIEF, THINK_DEFAULT),
+                listOf("Off", "Brief", "Model default"),
+                h.thinking
+            ) {
+                h.thinking = it
+                rebuild()
+            },
+            LinearLayout.LayoutParams(MATCH, WRAP)
+        )
+        root.gap(dp(this, 24))
+        root.addView(divider(this), LinearLayout.LayoutParams(MATCH, dp(this, 1)))
+        root.gap(dp(this, 20))
+
         // ---- drive ----------------------------------------------------
         root.addView(sectionLabel(this, "How the model drives", driveHint()))
         root.gap(dp(this, 10))
@@ -323,6 +342,12 @@ class HarnessEditorActivity : Activity() {
         "SCAN" -> "SCAN — reveal the enemy through fog"
         "SHIELD" -> "SHIELD — soak one hit"
         else -> "WAIT — recharge faster"
+    }
+
+    private fun thinkingHint(): String = when (h.thinking) {
+        THINK_BRIEF -> "Asks for low reasoning effort and hides the trace. A good middle ground."
+        THINK_DEFAULT -> "Whatever the model does normally. A heavy reasoner can spend its whole budget thinking and never write a move."
+        else -> "Reasoning switched off where the model allows it. Fastest, cheapest, and it actually answers."
     }
 
     private fun driveHint(): String = when (h.drive) {

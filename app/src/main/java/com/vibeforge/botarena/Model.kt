@@ -81,6 +81,10 @@ const val VIEW_ASCII = "ASCII"
 const val VIEW_JSON = "JSON"
 const val VIEW_PROSE = "PROSE"
 
+const val THINK_OFF = "OFF"
+const val THINK_BRIEF = "BRIEF"
+const val THINK_DEFAULT = "DEFAULT"
+
 const val MEM_NONE = "NONE"
 const val MEM_LAST_N = "LAST_N"
 const val MEM_SCRATCH = "SCRATCHPAD"
@@ -97,6 +101,7 @@ class Harness {
     var name = "New harness"
     var model = "openai/gpt-4o-mini"
     var temperature = 0.7
+    var thinking = THINK_OFF
     var drive = DRIVE_TURN
     var queueSize = 4
     var view = VIEW_ASCII
@@ -114,6 +119,7 @@ class Harness {
         h.name = name + " copy"
         h.model = model
         h.temperature = temperature
+        h.thinking = thinking
         h.drive = drive
         h.queueSize = queueSize
         h.view = view
@@ -199,6 +205,7 @@ object Store {
         o.put("name", h.name)
         o.put("model", h.model)
         o.put("temperature", h.temperature)
+        o.put("thinking", h.thinking)
         o.put("drive", h.drive)
         o.put("queueSize", h.queueSize)
         o.put("view", h.view)
@@ -235,6 +242,7 @@ object Store {
         h.name = o.optString("name", "Harness")
         h.model = o.optString("model", "openai/gpt-4o-mini")
         h.temperature = o.optDouble("temperature", 0.7)
+        h.thinking = o.optString("thinking", THINK_OFF)
         h.drive = o.optString("drive", DRIVE_TURN)
         h.queueSize = o.optInt("queueSize", 4)
         h.view = o.optString("view", VIEW_ASCII)

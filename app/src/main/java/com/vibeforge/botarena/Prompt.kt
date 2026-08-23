@@ -190,18 +190,18 @@ fun outputContract(h: Harness): String {
     val verbs = h.actions.joinToString(", ")
     val sb = StringBuilder()
     if (h.drive == DRIVE_QUEUE) {
-        sb.append("Reply with up to ").append(h.queueSize).append(" actions, one per line, in the order ")
-            .append("they should run. They execute blind — the enemy will move in between — so keep the ")
-            .append("later ones safe.\n")
+        sb.append("Decide up to ").append(h.queueSize).append(" actions, in the order they should run. ")
+            .append("They execute blind — the enemy moves in between — so keep the later ones safe.\n")
     } else {
-        sb.append("Reply with exactly one action.\n")
+        sb.append("Decide exactly one action.\n")
     }
-    sb.append("Each action goes on its own line, bare, with no numbering or backticks. ")
+    sb.append("Write each one on its own line, at the very end of your reply, in this exact form:\n")
+    sb.append("ACTION: MOVE N\n")
     sb.append("Valid verbs: ").append(verbs).append(". MOVE, TURN and FIRE take a direction: N, S, E or W.\n")
     if (h.allowNotes) {
-        sb.append("You may add one final line starting with NOTE: to leave a memo for your future self.\n")
+        sb.append("You may add one line starting with NOTE: to leave a memo for your future self.\n")
     }
-    sb.append("You may reason first, but the last lines of your reply must be the actions.")
+    sb.append("Keep any thinking to a sentence or two. A reply with no ACTION: line wastes the turn.")
     return sb.toString()
 }
 

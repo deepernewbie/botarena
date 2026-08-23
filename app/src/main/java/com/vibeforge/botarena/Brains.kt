@@ -30,6 +30,12 @@ private val ACT_PATTERN: Pattern = Pattern.compile(
     Pattern.CASE_INSENSITIVE
 )
 
+private val WHOLE_LINE: Pattern = Pattern.compile(
+    "^(MOVE|TURN|FIRE|SCAN|SHIELD|WAIT)" +
+        "(?:[\\s:]+(NORTH|SOUTH|EAST|WEST|UP|DOWN|LEFT|RIGHT|N|S|E|W))?[.!]?$",
+    Pattern.CASE_INSENSITIVE
+)
+
 private fun scan(text: String, allowed: List<String>, max: Int): List<Act> {
     val out = ArrayList<Act>()
     val m = ACT_PATTERN.matcher(text)
@@ -44,16 +50,43 @@ private fun scan(text: String, allowed: List<String>, max: Int): List<Act> {
 }
 
 /**
- * Models are told to put their actions on the last lines, so read the tail first
- * and only fall back to the whole reply if the tail holds nothing usable.
+ * Actions are read from explicit ACTION: lines first. Without that anchor, a model
+ * thinking out loud ("so I'd write something like MOVE S") has its example parsed
+ * as a real decision — which is exactly the kind of bug that looks like the robot
+ * obeying an instruction nobody gave.
  */
 fun parseActs(reply: String, allowed: List<String>, max: Int): List<Act> {
+    val declared = StringBuilder()
+    for (raw in reply.split("\n")) {
+        val line = raw.trim().trim('*', '-', '`', '#', ' ')
+        val idx = line.uppercase(Locale.US).indexOf("ACTION:")
+        if (idx >= 0) declared.append(line.substring(idx + 7).trim()).append("\n")
+    }
+    if (declared.isNotEmpty()) {
+        val fromDeclared = scan(declared.toString(), allowed, max)
+        if (fromDeclared.isNotEmpty()) return fromDeclared
+    }
+
+    // Older or sloppier replies: accept a trailing action only when it occupies a
+    // whole line by itself. "or MOVE E, etc." inside a sentence is discussion, not
+    // a decision, and acting on it would put words in the model's mouth.
+    val collected = ArrayList<Act>()
     val lines = reply.trim().split("\n")
-    val tailFrom = maxOf(0, lines.size - (max + 3))
-    val tail = lines.subList(tailFrom, lines.size).joinToString("\n")
-    val fromTail = scan(tail, allowed, max)
-    if (fromTail.isNotEmpty()) return fromTail
-    return scan(reply, allowed, max)
+    var i = lines.size - 1
+    while (i >= 0 && collected.size < max) {
+        val line = lines[i].trim().trim('*', '-', '`', '#', ' ', '.')
+        i--
+        if (line.isEmpty()) continue
+        if (line.uppercase(Locale.US).startsWith("NOTE:")) continue
+        val m = WHOLE_LINE.matcher(line)
+        if (!m.matches()) break
+        val kind = m.group(1)?.uppercase(Locale.US) ?: break
+        if (!allowed.contains(kind)) break
+        val dir = Dir.of(m.group(2))
+        if ((kind == "MOVE" || kind == "TURN" || kind == "FIRE") && dir == null) break
+        collected.add(0, Act(kind, dir))
+    }
+    return collected
 }
 
 fun parseNote(reply: String): String? {
@@ -275,7 +308,14 @@ class LlmBrain(private val h: Harness, private val apiKey: String) : Brain {
             val note = if (h.allowNotes) parseNote(reply) else null
             if (note != null && h.memory == MEM_SCRATCH) me.notes = note
             if (acts.isEmpty()) {
-                cb(Decision(listOf(Act("WAIT")), reply, "No usable action found in the reply — holding position.", note))
+                cb(
+                    Decision(
+                        listOf(Act("WAIT")), reply,
+                        "No ACTION: line in the reply, so the turn was wasted. If the model is thinking " +
+                            "out loud instead of deciding, set Thinking to Off in the harness editor.",
+                        note
+                    )
+                )
                 return@call
             }
             for (i in 1 until acts.size) queue.add(acts[i])
@@ -288,7 +328,7 @@ class LlmBrain(private val h: Harness, private val apiKey: String) : Brain {
             var reply = ""
             var error: String? = null
             try {
-                reply = OpenRouter.chat(apiKey, h.model, h.temperature, system, user)
+                reply = OpenRouter.chat(apiKey, h.model, h.temperature, h.thinking, system, user)
             } catch (e: Exception) {
                 error = e.message ?: e.toString()
             }
